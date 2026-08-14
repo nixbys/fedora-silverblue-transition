@@ -1,0 +1,14 @@
+[Unit]
+Description=restic backup of home directory to encrypted drive
+# This file is a template — 'backup-setup' generates a version with your
+# actual mount path filled in at ~/.config/systemd/user/backup-home.service.
+# If copying this by hand instead, replace BACKUP_MOUNT_PATH below.
+ConditionPathIsMountPoint=BACKUP_MOUNT_PATH
+
+[Service]
+Type=oneshot
+ExecStart=%h/silverblue-setup/backup-home.sh
+# Don't let a runaway backup eat the whole machine
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily backup timer for backup-home.service
+
+[Timer]
+OnCalendar=daily
+# If the machine was off/asleep at the scheduled time, run it soon after boot
+Persistent=true
+# Spread load if you ever run this on multiple machines against the same drive
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

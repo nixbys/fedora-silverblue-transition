@@ -1,0 +1,33 @@
+# extras.conf — your ongoing "add more stuff" file.
+# Copy this to ~/silverblue-setup/extras.conf and edit it. Re-run
+# `./setup-silverblue.sh extras` any time you add a line — it's safe to
+# re-run repeatedly, already-installed things are skipped or no-ops.
+#
+# Lines starting with # are comments. Blank lines are ignored.
+
+[flatpak]
+# One Flatpak app ID per line. Find IDs at https://flathub.org
+# org.prismlauncher.PrismLauncher
+# com.spotify.Client
+# org.telegram.desktop
+
+[rpm-ostree]
+# Small host-level CLI packages only — anything heavier belongs in a
+# distrobox container instead, to keep the base image slim.
+# htop
+# neovim
+
+[distrobox]
+# format: container-name:base-image:package1,package2,package3
+# Use fully-qualified image names (registries.conf.d hardening blocks
+# unqualified pulls once you've run the harden phase).
+# For a NON-Fedora base, or anything that needs distrobox-export --app for
+# host desktop integration (GUI apps) — for pure-Fedora CLI tooling, prefer
+# toolbox instead (see 'dev', which is a toolbox, not a distrobox — this
+# section's format only drives distrobox, not toolbox, installs).
+# retro:registry.fedoraproject.org/fedora:latest:retroarch
+
+[appimage]
+# format: Display Name|https://example.com/App.AppImage
+# After download, open Gearlever to integrate it into your app grid.
+# SomeTool|https://example.com/downloads/SomeTool-x86_64.AppImage

@@ -1,0 +1,84 @@
+# Custom Fedora Silverblue bootc image.
+#
+# This is the declarative replacement for what setup-silverblue.sh's `base`
+# and `protonvpn` commands used to do imperatively (rpm-ostree install, one
+# reboot per phase). Everything in this file is baked in at build time, in
+# CI, from source you can read and diff — not run ad hoc on the live machine.
+#
+# What's deliberately NOT in here, and why: Flatpaks, fedora-hardening,
+# firewall-extras/firefox-extensions/dns-mullvad, davincibox/protonpass/dev
+# containers, and backup-setup all stay in setup-silverblue.sh. Either they
+# write to /var (Flatpak app data, user profiles — never part of the image
+# by ostree/bootc design), or they're genuinely interactive/hardware-
+# dependent (fedora-hardening's USBGuard section builds its allowlist from
+# whatever's plugged in *right now* — there's no correct answer to bake into
+# an image built on a CI runner with no USB devices attached).
+#
+# Build locally to test before pushing:
+#   podman build -t localhost/silverblue-custom:test .
+#   podman run --rm -it localhost/silverblue-custom:test bash
+#
+# Apply to a running Silverblue system (after Phase 2's install + LUKS):
+#   sudo bootc switch ghcr.io/<YOUR_GITHUB_USERNAME>/silverblue-custom:latest
+#   (then reboot once — replaces the old base+protonvpn two-to-three-reboot
+#   dance with a single switch+reboot)
+
+ARG FEDORA_VERSION=44
+FROM quay.io/fedora-ostree-desktops/silverblue:${FEDORA_VERSION}
+
+LABEL containers.bootc=1
+LABEL ostree.bootable=1
+
+# --- RPM Fusion -------------------------------------------------------
+RUN FVER=$(rpm -E %fedora) && \
+    dnf install -y \
+      "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${FVER}.noarch.rpm" \
+      "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${FVER}.noarch.rpm" && \
+    dnf clean all
+
+# --- Freeworld codecs / VA-API / VDPAU (AMD) ---------------------------
+# Packages deliberately unversioned (hadolint DL3041 will flag this) — the
+# whole point is tracking whatever's current for Fedora 44's RPM Fusion at
+# each weekly rebuild, not freezing to a version that goes stale immediately.
+RUN dnf swap -y ffmpeg-free ffmpeg --allowerasing && \
+    dnf install -y ffmpeg-libs && \
+    dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld && \
+    dnf swap -y mesa-vdpau-drivers mesa-vdpau-drivers-freeworld && \
+    dnf install -y \
+      gstreamer1-plugins-bad-free gstreamer1-plugins-good gstreamer1-plugins-ugly \
+      gstreamer1-plugin-openh264 gstreamer1-libav lame && \
+    dnf clean all
+
+RUN sed -i 's/enabled=0/enabled=1/' /etc/yum.repos.d/fedora-cisco-openh264.repo && \
+    dnf install -y openh264 mozilla-openh264 && \
+    dnf clean all
+
+# --- Small host CLI tools + GNOME Shell extensions ---------------------
+# These can't be Flatpaks (no host integration) or distrobox/toolbox
+# containers (GSConnect/AppIndicator run inside the gnome-shell process
+# itself — there's no container boundary that could contain them).
+# distrobox via dnf here, not the curl-installer setup-silverblue.sh used to
+# run — cleaner now that it can just be a normal declared package.
+RUN dnf install -y \
+      git lshw restic distrobox \
+      gnome-shell-extension-gsconnect \
+      libappindicator-gtk3 gnome-shell-extension-appindicator && \
+    dnf clean all
+
+# --- Proton VPN (official app) -----------------------------------------
+# Needs host-level network stack access (kernel WireGuard, NetworkManager
+# D-Bus, killswitch routing) — same reasoning as setup-silverblue.sh's
+# cmd_protonvpn, just baked in now instead of a two-reboot runtime dance.
+RUN FVER=$(rpm -E %fedora) && \
+    dnf install -y \
+      "https://repo.protonvpn.com/fedora-${FVER}-stable/protonvpn-stable-release/protonvpn-stable-release-1.0.4-1.noarch.rpm" && \
+    dnf install -y proton-vpn-gnome-desktop && \
+    dnf clean all
+
+# Validates the image is actually a well-formed bootc target before it ever
+# gets pushed — catches mistakes here in CI, not on your actual machine.
+# (hadolint DL3059 will suggest consolidating the RUN steps above into one —
+# kept separate deliberately: each logical group gets its own build-cache
+# layer, so touching one section doesn't force rebuilding everything above
+# it, and a failure points at exactly which group broke.)
+RUN bootc container lint
