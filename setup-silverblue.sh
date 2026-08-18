@@ -58,6 +58,13 @@
 #             backup drive setup (not scripted — partitioning is
 #             destructive), then generate a customized backup script + point
 #             you at the systemd timer for automation.
+#   control-panel <start|stop|status>  Run every command in this script from
+#             a browser tab instead of a terminal — a local-only (127.0.0.1)
+#             web terminal with real sudo prompts, gated by a per-run auth
+#             token. 'start' layers python3 if needed, installs a
+#             systemd --user service (so the session survives closing the
+#             tab), and prints the URL. See control-panel/README.md for the
+#             trust model before using it.
 #   extras    Read extras.conf (see extras.conf.example) and install anything
 #             listed there — your ongoing "add more stuff" mechanism.
 #   status    Check the actual current state of disk encryption, Secure Boot,
@@ -73,12 +80,21 @@ set -uo pipefail
 
 DRY_RUN=0
 CMD="${1:-}"
-[[ "${2:-}" == "--dry-run" || "${1:-}" == "--dry-run" ]] && DRY_RUN=1
+# Scan every arg, not just $1/$2 — 'control-panel' takes a sub-action
+# (start/stop/status) in $2, so --dry-run can legitimately land in $3
+# there (e.g. 'control-panel start --dry-run').
+for _arg in "$@"; do [[ "$_arg" == "--dry-run" ]] && DRY_RUN=1; done
 
 REAL_USER="${SUDO_USER:-${USER:-$(id -un)}}"
 WORKDIR="$HOME/silverblue-setup"
 LOGFILE="$WORKDIR/setup.log"
 FAILED=()
+
+# Directory this script itself lives in — needed by control-panel to find
+# control-panel/server.py regardless of where the repo was cloned, since
+# WORKDIR above is a separate ~/silverblue-setup working directory, not the
+# repo checkout.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 mkdir -p "$WORKDIR"
 
@@ -233,6 +249,13 @@ cmd_base() {
   ensure_layered gnome-shell-extension-gsconnect   # replaces KDE Connect flatpak — see cmd_apps
   ensure_layered libappindicator-gtk3              # tray icon support, needed for Proton VPN app
   ensure_layered gnome-shell-extension-appindicator
+  # python3 isn't part of vanilla Silverblue's base image. Only the (optional)
+  # control-panel command needs it, and control-panel start already layers it
+  # standalone if missing — but folding it in here means it rides the SAME
+  # single post-base reboot as everything else above instead of forcing a
+  # separate surprise reboot the first time someone tries the control panel
+  # mid-way through Phase 4. Harmless if you never touch control-panel.
+  ensure_layered python3
 
   if [[ $DRY_RUN -eq 0 ]] && ! command -v distrobox &>/dev/null; then
     run "install distrobox (user-local, no layering needed)" -- \
@@ -933,6 +956,104 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+cmd_control_panel() {
+  # Runs control-panel/server.py as a systemd --user service so the PTY
+  # session (and anything long-running inside it, like 'harden' or a
+  # rpm-ostree layer) survives you closing the browser tab. See
+  # control-panel/README.md for the full trust model — short version: binds
+  # to 127.0.0.1 only, every state-changing request needs a random per-run
+  # token that's only ever handed to the page this server itself serves.
+  # Collect args that aren't 'control-panel' (the dispatcher passes "$@" from
+  # the top, so that's $1) or --dry-run. Zero leftover words defaults to
+  # 'start'; exactly one must be start/stop/status; anything else is a typo
+  # and must error out loud, not silently fall through to starting a real
+  # systemd service — that fallthrough was a real bug caught in testing.
+  local a rest=()
+  for a in "$@"; do
+    case "$a" in control-panel|--dry-run) : ;; *) rest+=("$a") ;; esac
+  done
+  local sub="start"
+  [[ ${#rest[@]} -ge 1 ]] && sub="${rest[0]}"
+  local port=8642
+  local unit_dir="$HOME/.config/systemd/user"
+  local unit="$unit_dir/silverblue-control-panel.service"
+  local server_py="$SCRIPT_DIR/control-panel/server.py"
+
+  case "$sub" in
+    start)
+      : # fall through to the start logic below
+      ;;
+    stop)
+      log "=== CONTROL-PANEL: stopping ==="
+      run "stop control panel service" -- systemctl --user stop silverblue-control-panel.service
+      return 0
+      ;;
+    status)
+      say "=== CONTROL-PANEL: status ===\n"
+      if systemctl --user is-active --quiet silverblue-control-panel.service 2>/dev/null; then
+        say "Running: http://127.0.0.1:$port/"
+      else
+        say "Not running. Start it with: ./setup-silverblue.sh control-panel start"
+      fi
+      return 0
+      ;;
+    *)
+      say "Usage: ./setup-silverblue.sh control-panel <start|stop|status>"
+      say "Unrecognized: '$sub'"
+      return 1
+      ;;
+  esac
+
+  log "=== CONTROL-PANEL: starting local web terminal on 127.0.0.1:$port ==="
+
+  if [[ ! -f "$server_py" ]]; then
+    say "control-panel/server.py not found next to this script ($SCRIPT_DIR) — did"
+    say "the control-panel/ directory get left out when you copied this repo?"
+    return 1
+  fi
+
+  if ! command -v python3 &>/dev/null; then
+    ensure_layered python3
+    say "\npython3 was just layered — REBOOT NOW, then run"
+    say "'./setup-silverblue.sh control-panel start' again."
+    return 0
+  fi
+
+  if [[ $DRY_RUN -eq 1 ]]; then
+    log "DRY-RUN: would write $unit and start it"
+    return 0
+  fi
+
+  mkdir -p "$unit_dir"
+  cat > "$unit" <<EOF
+[Unit]
+Description=Silverblue control panel (local web terminal for setup-silverblue.sh)
+
+[Service]
+Type=simple
+ExecStart=$(command -v python3) $server_py --port $port
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+
+  run "reload systemd user units" -- systemctl --user daemon-reload
+  run "enable + start control panel" -- systemctl --user enable --now silverblue-control-panel.service
+
+  sleep 1
+  if systemctl --user is-active --quiet silverblue-control-panel.service; then
+    say "\nRunning: http://127.0.0.1:$port/"
+    say "Open that in a browser on THIS machine (see control-panel/README.md — it's"
+    say "deliberately not reachable from anywhere else). The auth token is embedded in"
+    say "the page server-side; nothing to copy/paste."
+  else
+    say "\nService didn't come up — check: journalctl --user -u silverblue-control-panel -n 40"
+  fi
+}
+
+# ---------------------------------------------------------------------------
 cmd_extras() {
   log "=== EXTRAS: reading extras.conf ==="
   local conf="$WORKDIR/extras.conf"
@@ -1119,6 +1240,16 @@ cmd_status() {
     echo "not installed — run 'backup-setup'"
   fi
 
+  # Control panel
+  printf '%-28s' "Control panel:"
+  if systemctl --user is-active --quiet silverblue-control-panel.service 2>/dev/null; then
+    echo "running — http://127.0.0.1:8642/"
+  elif [[ -f "$HOME/.config/systemd/user/silverblue-control-panel.service" ]]; then
+    echo "installed, not running — run 'control-panel start'"
+  else
+    echo "not set up — run 'control-panel start'"
+  fi
+
   echo
   say "Note: this reads current state, it doesn't fix anything. Re-run the relevant"
   say "command (dns-mullvad, firewall-extras, firefox-extensions, harden) to fix a gap."
@@ -1144,6 +1275,7 @@ case "$CMD" in
   protonpass)       cmd_protonpass ;;
   dev)              cmd_dev ;;
   backup-setup)     cmd_backup_setup ;;
+  control-panel)    cmd_control_panel "$@" ;;
   extras)           cmd_extras ;;
   status)           cmd_status ;;
   all)              cmd_base; say "\nReboot now, then run: ./setup-silverblue.sh apps" ;;

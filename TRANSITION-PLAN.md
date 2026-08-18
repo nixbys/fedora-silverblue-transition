@@ -58,11 +58,13 @@ Anything that breaks, breaks here — not on your daily driver.
 
 ## Phase 3 — Base layer (Week 4)
 
+**Getting this repo onto the fresh install first:** vanilla Silverblue doesn't have `git` yet at this point — it's one of the things `base` itself layers, so you can't `git clone` your way in on a completely fresh machine. Firefox is preinstalled, so: download this repo as a ZIP from its GitHub page (Code → Download ZIP), extract it with Files (Nautilus's built-in extract handles `.zip` natively, no separate tool needed), then open Terminal (preinstalled) and `cd` into the extracted folder. ZIP extraction doesn't reliably preserve the executable bit, so either run `chmod +x setup-silverblue.sh` once, or just invoke it as `bash setup-silverblue.sh <command>` throughout — either works, the second sidesteps the permission-bit question entirely regardless of how the files arrived.
+
 Run:
 ```bash
 ./setup-silverblue.sh base
 ```
-This layers RPM Fusion, swaps in freeworld codecs/VA-API drivers, enables OpenH264, and layers the small CLI/host-integration tools that can't be Flatpaks or don't fit a container: `git`/`lshw` (need real host access), `restic` (backup tool — kept host-side deliberately, see "Compartmentalization audit" below), GSConnect + AppIndicator (GNOME Shell extensions, can only run on the host), and the distrobox installer (needed for `davincibox`/`protonpass` specifically — `dev` uses toolbox instead, already pre-installed). **Requires one reboot** — rpm-ostree layered changes apply on next boot, not immediately.
+This layers RPM Fusion, swaps in freeworld codecs/VA-API drivers, enables OpenH264, and layers the small CLI/host-integration tools that can't be Flatpaks or don't fit a container: `git`/`lshw` (need real host access), `restic` (backup tool — kept host-side deliberately, see "Compartmentalization audit" below), GSConnect + AppIndicator (GNOME Shell extensions, can only run on the host), `python3` (not on vanilla Silverblue by default — only the optional `control-panel` command needs it, folded in here so trying that later doesn't cost a second reboot), and the distrobox installer (needed for `davincibox`/`protonpass` specifically — `dev` uses toolbox instead, already pre-installed). **Requires one reboot** — rpm-ostree layered changes apply on next boot, not immediately.
 
 ## Phase 4 — Apps, hardening, extras (Week 5)
 
@@ -95,6 +97,20 @@ Once you've gone 2–3 weeks without needing the Bazzite fallback, decommission 
 - New game or app you want? Add one line to `extras.conf`, run `./setup-silverblue.sh extras`.
 - Something a hardening section broke? `sudo ./fedora-harden.sh --rollback` undoes the last run; re-run with an adjusted `--skip` list.
 - Fedora 45 lands in October — plan a routine `rpm-ostree rebase` a few weeks after release, once initial bug reports settle.
+
+---
+
+## Browser control panel — driving all of this from a tab instead of a terminal
+
+Every phase from here on (`base` through `extras`) can also be run from a browser tab on this machine, not just a real terminal:
+
+```bash
+./setup-silverblue.sh control-panel start
+```
+
+opens `http://127.0.0.1:8642/` — a real shell (sudo prompts, `read -p` prompts, `rpm-ostree` progress output, all of it) with a sidebar that stages each command above into the terminal on click, and a banner + desktop notification when something's actually waiting on your sudo password, so nothing runs elevated without you seeing it happen. Full detail — and specifically the trust model (why it's `127.0.0.1`-only with no flag to change that, and what the per-run auth token actually defends against) — is in `control-panel/README.md`. Worth reading that before your first `harden` run through it, not after.
+
+This is additive, not a replacement path: the terminal-only workflow documented in Phases 3–7 above still works exactly as written if you'd rather not run a local web service at all.
 
 ---
 
@@ -153,7 +169,7 @@ That last row is worth being explicit about: **`apps`, `webapps`, `harden`, `fir
 
 - **`image/Containerfile`** — the declarative replacement for what `base` and `protonvpn` used to layer imperatively. Installed `podman` and `hadolint` in my own environment and actually linted it for real — not just eyeballed the syntax. Two fixes came out of that (missing `dnf clean all` per layer), and two warnings I deliberately didn't act on with reasons written directly in the file (version-pinning would freeze codec packages the moment they're written, defeating the point of a weekly rebuild; the multi-`RUN` structure is intentional for build-cache granularity, not an oversight).
 - **Tried an actual `podman build`** against the real Fedora bootc base image to verify it builds, not just lints clean. Hit a sandbox restriction specific to container registries (`quay.io`/`docker.io` both blocked — a narrower allowlist than general HTTPS, evidently a deliberate guard against pulling arbitrary container images in this environment). Couldn't get past that here — **you should treat the first real build as the actual test**, via the checklist at the bottom of `build-image.yml`.
-- **`image/build-image.yml`** — GitHub Actions workflow to build and push to GHCR on every Containerfile change, plus a weekly rebuild so RPM Fusion/codec/Proton VPN updates land even if you don't touch the repo. Valid YAML, and the action pattern matches the real templates found — but same honesty as above, I can't execute a GitHub Actions run myself.
+- **`.github/workflows/build-image.yml`** — GitHub Actions workflow to build and push to GHCR on every Containerfile change, plus a weekly rebuild so RPM Fusion/codec/Proton VPN updates land even if you don't touch the repo. Valid YAML, and the action pattern matches the real templates found — but same honesty as above, I can't execute a GitHub Actions run myself. (Has to live under `.github/workflows/` specifically — that's not a style choice, it's the only path GitHub Actions ever scans for workflow files. An earlier pass in this doc called it `image/build-image.yml`, which would silently never have run; fixed.)
 
 ### Migration path
 

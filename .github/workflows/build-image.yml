@@ -1,0 +1,107 @@
+# Builds image/Containerfile and pushes it to GHCR. This is the CI half of
+# the "stateless work system" described in TRANSITION-PLAN.md — the
+# declarative replacement for setup-silverblue.sh's `base`/`protonvpn`
+# imperative layering.
+#
+# NOTE ON PATH: this file has to live at .github/workflows/build-image.yml —
+# GitHub Actions only ever discovers workflows there, regardless of what a
+# Containerfile comment or the docs call it. (An earlier pass in this repo's
+# docs referred to it as image/build-image.yml, which would never have run —
+# fixed alongside adding this file.)
+#
+# Triggers:
+#   - push to main touching the Containerfile (or this workflow itself)
+#   - weekly schedule, so RPM Fusion/codec/Proton VPN package updates land
+#     even if the Containerfile never changes
+#   - manual dispatch, for an on-demand rebuild
+name: Build and push bootc image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'image/Containerfile'
+      - '.github/workflows/build-image.yml'
+  schedule:
+    - cron: '17 6 * * 1' # Mondays ~06:17 UTC — off the hour, avoids scheduler pileup
+  workflow_dispatch: {}
+
+env:
+  IMAGE_NAME: silverblue-custom
+  REGISTRY: ghcr.io
+  FEDORA_VERSION: "44"
+
+# Least-privilege: only what pushing to GHCR under this repo actually needs.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          echo "date_tag=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "sha_tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (buildah)
+        id: build
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ env.IMAGE_NAME }}
+          tags: latest ${{ steps.meta.outputs.date_tag }} ${{ steps.meta.outputs.sha_tag }}
+          context: image
+          containerfiles: |
+            image/Containerfile
+          build-args: |
+            FEDORA_VERSION=${{ env.FEDORA_VERSION }}
+
+      - name: Log in to GHCR
+        uses: redhat-actions/podman-login@v1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push to GHCR
+        id: push
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.build.outputs.tags }}
+          registry: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+
+      - name: Summary
+        run: |
+          echo "Pushed: ${{ steps.push.outputs.registry-paths }}" >> "$GITHUB_STEP_SUMMARY"
+
+# -----------------------------------------------------------------------------
+# First-run checklist (do these once, before the first push/schedule fires):
+#
+# 1. Settings -> Actions -> General -> Workflow permissions -> select
+#    "Read and write permissions". Off by default on new repos; without it
+#    the push step above fails with a 403 even though GITHUB_TOKEN is wired
+#    up correctly.
+#
+# 2. After the first successful run, the package shows up under
+#    github.com/<you>?tab=packages as PRIVATE by default. To pull it with a
+#    plain `sudo bootc switch` on the Silverblue machine without also
+#    configuring registry auth there, make it public:
+#    package settings -> Change visibility -> Public. (Keep it private only
+#    if you're prepared to `podman login ghcr.io` / configure
+#    /etc/ostree/auth.json on the client before switching.)
+#
+# 3. Watch the Actions tab for the first run. If `bootc container lint`
+#    (the last RUN step in the Containerfile) fails, the image was never
+#    pushed — that check exists specifically to catch a malformed bootc
+#    target in CI instead of on the real machine.
+#
+# 4. Confirm the pushed tag: `podman pull ghcr.io/<you>/silverblue-custom:latest`
+#    from any machine (or `skopeo inspect docker://ghcr.io/<you>/silverblue-custom:latest`
+#    without pulling the whole image) before trusting it enough to
+#    `bootc switch` on real hardware.

@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Silverblue Control Panel</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1b1e24; --panel2: #22262e; --border: #2c313a;
+    --text: #d8dee6; --muted: #8b96a5; --accent: #5fb3ff; --danger: #ff6b6b;
+    --warn: #f5c25f; --ok: #6fd68f;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
+  }
+  header {
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  header .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 999px;
+    background: rgba(95,179,255,0.15); color: var(--accent); border: 1px solid rgba(95,179,255,0.3);
+  }
+  header .spacer { flex: 1; }
+  header button {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  }
+  header button:hover { border-color: var(--accent); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #sidebar {
+    width: 280px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 10px;
+  }
+  #sidebar .hint { color: var(--muted); font-size: 12px; margin: 4px 4px 12px; }
+  .cmd-btn {
+    display: block; width: 100%; text-align: left; background: var(--panel2);
+    color: var(--text); border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 10px; margin-bottom: 6px; cursor: pointer; font-family: inherit;
+  }
+  .cmd-btn:hover { border-color: var(--accent); }
+  .cmd-btn code { color: var(--accent); font-size: 12.5px; }
+  .cmd-btn .desc { display: block; color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  #dry-run-row { display: flex; align-items: center; gap: 6px; margin: 8px 4px 14px; font-size: 12.5px; color: var(--muted); }
+  #term-wrap { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+  #term {
+    flex: 1; margin: 0; padding: 12px; overflow-y: auto; white-space: pre-wrap;
+    word-break: break-word; font: 13px/1.45 "SF Mono", Consolas, "Liberation Mono", monospace;
+    background: #0c0d10;
+  }
+  .b { font-weight: 700; }
+  .u { text-decoration: underline; }
+  .fg30{color:#5b6270}.fg31{color:#ff6b6b}.fg32{color:#6fd68f}.fg33{color:#f5c25f}
+  .fg34{color:#5fb3ff}.fg35{color:#c792ea}.fg36{color:#67d9d0}.fg37{color:#d8dee6}
+  .fg90{color:#7d8695}.fg91{color:#ff8f8f}.fg92{color:#93e6ac}.fg93{color:#f7d385}
+  .fg94{color:#84c3ff}.fg95{color:#dab2f2}.fg96{color:#8fe6de}.fg97{color:#f1f4f8}
+  .bg40{background:#1a1d22}.bg41{background:#5c2323}.bg42{background:#234a30}
+  #hidden-input {
+    position: absolute; opacity: 0; pointer-events: none; width: 1px; height: 1px;
+  }
+  #sudo-banner {
+    display: none; position: absolute; left: 12px; right: 12px; bottom: 12px;
+    background: #2a2210; border: 1px solid var(--warn); border-radius: 8px;
+    padding: 12px 14px; box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  }
+  #sudo-banner.show { display: block; }
+  #sudo-banner .title { color: var(--warn); font-weight: 600; margin-bottom: 4px; }
+  #sudo-banner p { margin: 0 0 10px; color: var(--text); font-size: 13px; }
+  #sudo-banner button {
+    border-radius: 6px; padding: 6px 12px; font-size: 12.5px; cursor: pointer; border: 1px solid var(--border);
+  }
+  #sudo-ack { background: var(--warn); color: #221a05; border-color: var(--warn); font-weight: 600; margin-right: 8px; }
+  #sudo-cancel { background: var(--panel2); color: var(--text); }
+  footer {
+    padding: 6px 16px; background: var(--panel); border-top: 1px solid var(--border);
+    font-size: 11.5px; color: var(--muted); flex-shrink: 0;
+  }
+  .status-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); margin-right: 5px; }
+  .status-dot.live { background: var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Silverblue Control Panel</h1>
+  <span class="badge">127.0.0.1:__PORT__ · local only</span>
+  <div class="spacer"></div>
+  <button id="enable-notif">Enable desktop notifications</button>
+</header>
+<main>
+  <div id="sidebar">
+    <div class="hint">
+      Click a command to <strong>stage</strong> it into the terminal — it appears typed but
+      not submitted. Press <strong>Enter</strong> in the terminal to actually run it. Anything
+      needing sudo shows its normal password prompt right there, same as a real terminal.
+    </div>
+    <label id="dry-run-row">
+      <input type="checkbox" id="dry-run"> append <code>--dry-run</code> when staging
+    </label>
+    <div id="cmd-list"></div>
+  </div>
+  <div id="term-wrap">
+    <pre id="term" tabindex="0"></pre>
+    <textarea id="hidden-input" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+    <div id="sudo-banner">
+      <div class="title">⚠ Waiting for your sudo password</div>
+      <p>A command in the terminal below is asking for authentication. Type your password there to
+      continue, or cancel it — nothing runs with elevated access until you do either.</p>
+      <button id="sudo-ack">OK, I'll type it</button>
+      <button id="sudo-cancel">Cancel (Ctrl-C)</button>
+    </div>
+  </div>
+</main>
+<footer><span class="status-dot" id="status-dot"></span><span id="status-text">connecting…</span></footer>
+
+<script src="term-parser.js"></script>
+<script>
+(function () {
+  "use strict";
+  const TOKEN = "__AUTH_TOKEN__";
+  const parser = TermParser.createParser();
+  const term = document.getElementById('term');
+  const hiddenInput = document.getElementById('hidden-input');
+  const sudoBanner = document.getElementById('sudo-banner');
+  const statusDot = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+
+  // ---- command sidebar --------------------------------------------------
+  const COMMANDS = [
+    ['status', 'Report current state of everything — fixes nothing'],
+    ['base', 'RPM Fusion, codecs, core CLI tools — REQUIRES REBOOT after'],
+    ['apps', 'Flatpaks + Steam/Lutris overrides + GSConnect (post-reboot)'],
+    ['webapps', 'GNOME Web install steps for Discord/Element'],
+    ['resolve', 'davincibox DaVinci Resolve container walkthrough'],
+    ['harden', 'nixbys/fedora-hardening, interactive'],
+    ['firewall-extras', 'Steam Remote Play + KDE Connect firewalld ports'],
+    ['firefox-extensions', 'Force-install the full Firefox extension set'],
+    ['dns-mullvad', 'Switch system DNS to Mullvad (DoT)'],
+    ['dns-revert', 'Remove the forced DNS override'],
+    ['protonvpn', 'Official Proton VPN app (2 reboot-separated runs)'],
+    ['protonvpn-check', 'Verify DNS actually routes through Proton'],
+    ['protonpass', 'Official Proton Pass desktop app (distrobox)'],
+    ['dev', 'Dev/scripting toolbox'],
+    ['backup-setup', 'restic + encrypted drive + systemd timer'],
+    ['extras', 'Install anything listed in extras.conf'],
+  ];
+  const list = document.getElementById('cmd-list');
+  for (const [cmd, desc] of COMMANDS) {
+    const btn = document.createElement('button');
+    btn.className = 'cmd-btn';
+    btn.innerHTML = '<code>./setup-silverblue.sh ' + cmd + '</code><span class="desc">' + desc + '</span>';
+    btn.addEventListener('click', () => stage(cmd));
+    list.appendChild(btn);
+  }
+  function stage(cmd) {
+    const dry = document.getElementById('dry-run').checked ? ' --dry-run' : '';
+    sendInput('./setup-silverblue.sh ' + cmd + dry);
+    hiddenInput.focus();
+  }
+
+  // ---- terminal rendering ------------------------------------------------
+  // The actual ANSI-lite parsing lives in term-parser.js (shared with the
+  // Node test suite in control-panel/test/ — see that file for why it's a
+  // separate module and not inlined here).
+  function processChunk(raw) {
+    term.innerHTML = parser.feed(raw);
+    term.scrollTop = term.scrollHeight;
+    if (SUDO_RE.test(raw)) showSudoBanner();
+  }
+
+  // ---- sudo-prompt confirmation ------------------------------------------
+  const SUDO_RE = /\[sudo\] password for|^Password:\s*$/m;
+  function showSudoBanner() {
+    sudoBanner.classList.add('show');
+    if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+      new Notification('Silverblue control panel', { body: 'A command is waiting for your sudo password.' });
+    }
+  }
+  document.getElementById('sudo-ack').addEventListener('click', () => {
+    sudoBanner.classList.remove('show'); hiddenInput.focus();
+  });
+  document.getElementById('sudo-cancel').addEventListener('click', () => {
+    sendInput('\x03'); sudoBanner.classList.remove('show'); hiddenInput.focus();
+  });
+  document.getElementById('enable-notif').addEventListener('click', () => {
+    if ('Notification' in window) Notification.requestPermission();
+  });
+
+  // ---- input capture ------------------------------------------------------
+  term.addEventListener('click', () => hiddenInput.focus());
+  window.addEventListener('load', () => hiddenInput.focus());
+
+  const KEY_BYTES = {
+    Enter: '\r', Backspace: '\x7f', Tab: '\t', Escape: '\x1b',
+    ArrowUp: '\x1b[A', ArrowDown: '\x1b[B', ArrowRight: '\x1b[C', ArrowLeft: '\x1b[D',
+  };
+  hiddenInput.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && !e.altKey && !e.metaKey && /^[a-zA-Z]$/.test(e.key)) {
+      const code = e.key.toUpperCase().charCodeAt(0) - 64;
+      sendInput(String.fromCharCode(code));
+      e.preventDefault();
+      return;
+    }
+    if (KEY_BYTES[e.key] !== undefined) {
+      sendInput(KEY_BYTES[e.key]);
+      e.preventDefault();
+    }
+  });
+  hiddenInput.addEventListener('input', () => {
+    if (hiddenInput.value) { sendInput(hiddenInput.value); hiddenInput.value = ''; }
+  });
+
+  function sendInput(str) {
+    fetch('/input', {
+      method: 'POST',
+      headers: { 'X-Auth-Token': TOKEN, 'Content-Type': 'application/octet-stream' },
+      body: str,
+    }).catch(() => {});
+  }
+
+  // ---- resize --------------------------------------------------------------
+  function computeSize() {
+    const probe = document.createElement('span');
+    probe.textContent = 'M'.repeat(20);
+    probe.style.visibility = 'hidden';
+    term.appendChild(probe);
+    const charW = probe.getBoundingClientRect().width / 20;
+    const charH = parseFloat(getComputedStyle(term).lineHeight) || 18;
+    term.removeChild(probe);
+    const cols = Math.max(20, Math.floor(term.clientWidth / charW) - 1);
+    const rows = Math.max(5, Math.floor(term.clientHeight / charH) - 1);
+    return { cols, rows };
+  }
+  function sendResize() {
+    const { cols, rows } = computeSize();
+    fetch('/resize', {
+      method: 'POST',
+      headers: { 'X-Auth-Token': TOKEN, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cols, rows }),
+    }).catch(() => {});
+  }
+  let resizeTimer;
+  window.addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(sendResize, 200); });
+
+  // ---- output stream ---------------------------------------------------------
+  async function connectStream() {
+    statusText.textContent = 'connecting…';
+    statusDot.classList.remove('live');
+    try {
+      const resp = await fetch('/events', { headers: { 'X-Auth-Token': TOKEN } });
+      if (!resp.ok || !resp.body) throw new Error('stream failed: ' + resp.status);
+      statusText.textContent = 'live';
+      statusDot.classList.add('live');
+      sendResize();
+      const reader = resp.body.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        processChunk(decoder.decode(value, { stream: true }));
+      }
+    } catch (e) {
+      // fall through to retry
+    }
+    statusText.textContent = 'disconnected — retrying…';
+    statusDot.classList.remove('live');
+    setTimeout(connectStream, 1500);
+  }
+  connectStream();
+})();
+</script>
+</body>
+</html>
