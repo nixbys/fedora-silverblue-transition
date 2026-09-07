@@ -1,0 +1,48 @@
+# Supply-chain review
+#
+# Purpose: defend against a pull request that adds/bumps a dependency to a
+# version with a known vulnerability or a disallowed license. This repo has
+# no pip/npm manifest (control-panel/server.py is stdlib-only Python by
+# design; term-parser.js's test suite is plain Node, no dependencies) -- the
+# supply-chain surface here is the pinned GitHub Actions in
+# .github/workflows/ and the FROM base image + RPM Fusion/Proton VPN repos
+# layered in image/Containerfile. dependency-review-action reads whatever
+# GitHub's dependency graph has picked up for the PR's diff, so this costs
+# nothing to run even on a PR that touches neither, and starts covering
+# more automatically if a real manifest (requirements.txt, package.json)
+# is ever added.
+
+name: Dependency review
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+# Default-deny token; the job grants only read access.
+permissions: {}
+
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: dependency-review (PR gate)
+    # Only meaningful on a pull request -- it needs a base..head diff to
+    # review. Guards the manual workflow_dispatch trigger above, which has
+    # no diff to compare.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        with:
+          # Fail the PR on any newly introduced moderate-or-worse advisory.
+          fail-on-severity: moderate

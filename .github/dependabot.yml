@@ -1,0 +1,31 @@
+# Dependabot keeps the container base image and pinned/floating GitHub
+# Actions current.
+#
+# No pip/npm ecosystem entry: control-panel/server.py is stdlib-only Python
+# by design (see its module docstring and control-panel/README.md's "Why
+# Python stdlib, no dependencies" section), and term-parser.js's test suite
+# is plain Node with no package.json. There is nothing for those ecosystems
+# to track. Add a pip/npm block here if that ever changes.
+
+version: 2
+updates:
+  # image/Containerfile's FROM base image (quay.io/fedora-ostree-desktops)
+  # and any other image references under image/.
+  - package-ecosystem: docker
+    directory: "/image"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Actions referenced in .github/workflows (build-image.yml currently
+  # floats major-version tags like actions/checkout@v4; the new
+  # secret-scan.yml / dependency-review.yml workflows pin exact SHAs --
+  # Dependabot updates both styles).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns: ["*"]
